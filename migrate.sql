@@ -1,0 +1,9 @@
+-- backendTz/migrate.sql
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tag VARCHAR(50) UNIQUE;
+
+CREATE TABLE IF NOT EXISTS friends (
+  id        SERIAL PRIMARY KEY,
+  user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  friend_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE(user_id, friend_id)
+);
