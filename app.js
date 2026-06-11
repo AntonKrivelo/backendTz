@@ -179,61 +179,134 @@ app.delete('/deeds/:id', async (req, res) => {
 
 app.post('/friends', async (req, res) => {
   const { userId, friendTag } = req.body;
+
   if (!userId || !friendTag) {
-    return res.status(400).json({ message: 'userId and friendTag are required' });
+    return res.status(400).json({
+      message: 'userId and friendTag are required',
+    });
   }
+
   const parsedUserId = parseInt(userId, 10);
+
   if (isNaN(parsedUserId)) {
-    return res.status(400).json({ message: 'userId must be a number' });
+    return res.status(400).json({
+      message: 'userId must be a number',
+    });
   }
+
   try {
-    const userResult = await pool.query(`SELECT id FROM users WHERE tag=$1`, [friendTag]);
-    if (userResult.rows.length === 0) return res.status(404).json({ message: 'User not found' });
+    const userResult = await pool.query(`SELECT id FROM users WHERE tag = $1`, [friendTag]);
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({
+        message: 'User not found',
+      });
+    }
+
     const friendId = userResult.rows[0].id;
-    if (String(friendId) === String(parsedUserId))
-      return res.status(400).json({ message: 'Cannot add yourself' });
-    await pool.query(`INSERT INTO friends (user_id, friend_id) VALUES ($1,$2)`, [
-      parsedUserId,
-      friendId,
-    ]);
-    res.json({ success: true });
+
+    if (friendId === parsedUserId) {
+      return res.status(400).json({
+        message: 'Cannot add yourself',
+      });
+    }
+
+    await pool.query('BEGIN');
+
+    await pool.query(
+      `
+      INSERT INTO friends (user_id, friend_id)
+      VALUES ($1, $2)
+      ON CONFLICT DO NOTHING
+      `,
+      [parsedUserId, friendId],
+    );
+
+    await pool.query(
+      `
+      INSERT INTO friends (user_id, friend_id)
+      VALUES ($1, $2)
+      ON CONFLICT DO NOTHING
+      `,
+      [friendId, parsedUserId],
+    );
+
+    await pool.query('COMMIT');
+
+    res.json({
+      success: true,
+    });
   } catch (e) {
-    if (e.code === '23505') return res.status(409).json({ message: 'Already following' });
-    res.status(500).json({ message: e.message });
+    await pool.query('ROLLBACK');
+
+    res.status(500).json({
+      message: e.message,
+    });
   }
 });
 
 app.get('/friends/:userId', async (req, res) => {
-  const { userId } = req.params;
   try {
     const result = await pool.query(
-      `SELECT u.id, u.username, u.tag
-       FROM friends f
-       JOIN users u ON u.id = f.friend_id
-       WHERE f.user_id=$1
-       ORDER BY f.id DESC`,
-      [userId],
+      `
+      SELECT
+        u.id,
+        u.username,
+        u.email,
+        u.tag
+      FROM friends f
+      JOIN users u
+        ON u.id = f.friend_id
+      WHERE f.user_id = $1
+      ORDER BY u.username
+      `,
+      [req.params.userId],
     );
+
     res.json(result.rows);
   } catch (e) {
-    res.status(500).json({ message: e.message });
+    res.status(500).json({
+      message: e.message,
+    });
   }
 });
-
 app.delete('/friends/:userId/:friendId', async (req, res) => {
   const { userId, friendId } = req.params;
+
   try {
-    const result = await pool.query(`DELETE FROM friends WHERE user_id=$1 AND friend_id=$2`, [
-      userId,
-      friendId,
-    ]);
-    if (result.rowCount === 0) return res.status(404).json({ message: 'Friend not found' });
-    res.json({ success: true });
+    await pool.query('BEGIN');
+
+    await pool.query(
+      `
+      DELETE FROM friends
+      WHERE user_id = $1
+        AND friend_id = $2
+      `,
+      [userId, friendId],
+    );
+
+    await pool.query(
+      `
+      DELETE FROM friends
+      WHERE user_id = $1
+        AND friend_id = $2
+      `,
+      [friendId, userId],
+    );
+
+    await pool.query('COMMIT');
+
+    res.json({
+      success: true,
+    });
   } catch (e) {
-    res.status(500).json({ message: e.message });
+    await pool.query('ROLLBACK');
+
+    res.status(500).json({
+      message: e.message,
+    });
   }
 });
-
 /* ================= ERROR ================= */
 
 app.use((req, res, next) => {
